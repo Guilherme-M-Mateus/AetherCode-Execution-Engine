@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aethercode-exec-config
+  namespace: aethercode
+data:
+  AC_GATEWAY_ADDR: "0.0.0.0:5100"
+  AC_WORKER_COUNT: "16"
+  AC_LOG_FORMAT: "json"
+  AC_LOG_LEVEL: "info"
+  AC_JOB_TIMEOUT: "90s"
+  AC_SUBMIT_STREAM: "ac:submissions:submit"
+  AC_RUN_STREAM: "ac:submissions:run"
+  AC_CONSUMER_GROUP: "workers"
+  AC_SUBMIT_WEIGHT: "3"
+  AC_RATE_LIMIT_PER_MINUTE: "30"
+  AC_RATE_LIMIT_BURST: "10"
+  AC_ADMISSION_MAX_QUEUE_DEPTH: "10000"
+  AC_TEST_PARALLELISM: "4"
+  AC_COMPILE_CACHE_TTL: "60s"
+  AC_BLOCK_READ_TIMEOUT: "500ms"
+  AC_GOGC: "200"

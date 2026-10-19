@@ -21,15 +21,28 @@ type Middleware struct {
 	jwksCancel  context.CancelFunc
 	issuer      string
 	audience    string
-	pool        *pgxpool.Pool
+	pool        *pgxpool.Pool // owner-role pool used when appPool is nil
+	appPool     *pgxpool.Pool // optional aethercode_app RLS pool for tenant/user resolution
 	tenantCache *ttlCache[uuid.UUID]
 	userCache   *ttlCache[uuid.UUID]
+}
+
+// queryPool returns the pool to use for auth queries: the RLS-enforced appPool
+// if configured, otherwise the main owner pool.
+func (m *Middleware) queryPool() *pgxpool.Pool {
+	if m.appPool != nil {
+		return m.appPool
+	}
+	return m.pool
 }
 
 // NewMiddleware creates an OIDC JWT validation middleware.
 // jwksURL should point to the internal JWKS endpoint (e.g. http://127.0.0.1:8087/oauth/v2/keys).
 // The issuer hostname is injected as the Host header for internal requests to Zitadel.
-func NewMiddleware(issuer, jwksURL, audience string, pool *pgxpool.Pool) (*Middleware, error) {
+// appPool is optional: when non-nil, tenant and user lookups use it (connecting as
+// aethercode_app so Row-Level Security policies are enforced). Pass nil to fall
+// back to the main owner pool (existing behaviour, RLS bypassed).
+func NewMiddleware(issuer, jwksURL, audience string, pool *pgxpool.Pool, appPool *pgxpool.Pool) (*Middleware, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Extract host from issuer URL to inject as Host header on internal JWKS requests.
@@ -63,6 +76,7 @@ func NewMiddleware(issuer, jwksURL, audience string, pool *pgxpool.Pool) (*Middl
 		issuer:      issuer,
 		audience:    audience,
 		pool:        pool,
+		appPool:     appPool,
 		tenantCache: tc,
 		userCache:   uc,
 	}, nil
@@ -167,7 +181,7 @@ func (m *Middleware) resolveTenant(ctx context.Context, orgID string) (uuid.UUID
 		return id, nil
 	}
 	var id uuid.UUID
-	err := m.pool.QueryRow(ctx,
+	err := m.queryPool().QueryRow(ctx,
 		`SELECT id FROM tenants WHERE slug = $1 AND active = true`, orgID).Scan(&id)
 	if err != nil {
 		return uuid.Nil, err
@@ -184,7 +198,7 @@ func (m *Middleware) resolveUser(ctx context.Context, tenantID uuid.UUID, sub, e
 
 	// Try lookup first (fast path)
 	var id uuid.UUID
-	err := m.pool.QueryRow(ctx,
+	err := m.queryPool().QueryRow(ctx,
 		`SELECT id FROM users WHERE tenant_id = $1 AND external_subject_id = $2`,
 		tenantID, sub).Scan(&id)
 	if err == nil {
@@ -193,7 +207,7 @@ func (m *Middleware) resolveUser(ctx context.Context, tenantID uuid.UUID, sub, e
 	}
 
 	// Auto-provision
-	err = m.pool.QueryRow(ctx,
+	err = m.queryPool().QueryRow(ctx,
 		`INSERT INTO users (tenant_id, external_subject_id, email, display_name)
 		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (tenant_id, external_subject_id) DO UPDATE SET email = EXCLUDED.email
