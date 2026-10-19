@@ -2,12 +2,15 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +29,38 @@ import (
 	"github.com/stjosephsplacements/AetherCode-Execution-Engine/internal/sandbox"
 )
 
+const streamTokenTTL = 30 * time.Minute // matches sseMaxLifetime with margin
+const streamTokenKeyPrefix = "ac:stoken:"
+
+// newStreamToken generates a 20-byte cryptographically random token and stores
+// it in Redis keyed to the job ID. Unauthenticated callers must present it to
+// open the SSE stream, preventing UUIDv7-guessing attacks.
+func newStreamToken(ctx context.Context, rdb *redis.Client, jobID string) (string, error) {
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("stream token: generate: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(b)
+	key := streamTokenKeyPrefix + jobID
+	if err := rdb.Set(ctx, key, token, streamTokenTTL).Err(); err != nil {
+		return "", fmt.Errorf("stream token: store: %w", err)
+	}
+	return token, nil
+}
+
+// verifyStreamToken checks that token matches the stored token for jobID.
+// Returns true on match; false on mismatch, missing key, or Redis error (fail closed).
+func verifyStreamToken(ctx context.Context, rdb *redis.Client, jobID, token string) bool {
+	if token == "" {
+		return false
+	}
+	stored, err := rdb.Get(ctx, streamTokenKeyPrefix+jobID).Result()
+	if err != nil {
+		return false
+	}
+	return stored == token
+}
+
 // Version is set at build time via ldflags.
 var Version = "dev"
 
@@ -37,13 +72,14 @@ type Handler struct {
 	judge                  *sandbox.Client
 	rdb                    *redis.Client
 	rateLimiter            *ratelimit.Limiter
+	unauthLimiter          *ratelimit.Limiter // nil when unauth rate limiting is disabled
 	admissionMaxQueueDepth int
 	ingestSem              chan struct{}
 	startTime              time.Time
 	workerCount            int
 }
 
-func NewHandler(pool *pgxpool.Pool, submitStream, runStream *queue.Stream, pubsub *queue.PubSub, judge *sandbox.Client, rdb *redis.Client, rateLimiter *ratelimit.Limiter, admissionMaxQueueDepth int, workerCount int) *Handler {
+func NewHandler(pool *pgxpool.Pool, submitStream, runStream *queue.Stream, pubsub *queue.PubSub, judge *sandbox.Client, rdb *redis.Client, rateLimiter *ratelimit.Limiter, unauthLimiter *ratelimit.Limiter, admissionMaxQueueDepth int, workerCount int) *Handler {
 	return &Handler{
 		pool:                   pool,
 		submitStream:           submitStream,
@@ -52,6 +88,7 @@ func NewHandler(pool *pgxpool.Pool, submitStream, runStream *queue.Stream, pubsu
 		judge:                  judge,
 		rdb:                    rdb,
 		rateLimiter:            rateLimiter,
+		unauthLimiter:          unauthLimiter,
 		admissionMaxQueueDepth: admissionMaxQueueDepth,
 		ingestSem:              make(chan struct{}, 512),
 		startTime:              time.Now(),
@@ -63,6 +100,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/execute", h.HandleExecute)
 	mux.HandleFunc("GET /api/v1/stream", h.HandleStream)
 	mux.HandleFunc("GET /api/v1/health", h.HandleHealth)
+	mux.HandleFunc("GET /api/v1/languages", h.HandleLanguages)
 }
 
 type executeRequest struct {
@@ -83,13 +121,15 @@ type testInput struct {
 }
 
 type executeResponse struct {
-	JobID string `json:"job_id"`
+	JobID       string `json:"job_id"`
+	StreamToken string `json:"stream_token,omitempty"` // unauthenticated callers must present this to stream
 }
 
-const maxSourceSize = 64 * 1024 // 64KB
+const maxSourceSize = 64 * 1024      // 64KB
 const maxTests = 100
-const maxTestDataSize = 8 << 20 // 8MB per test input/output
-const maxBodySize = 64 << 20    // whole request
+const maxTestDataSize = 8 << 20      // 8MB per test input/output
+const maxBodySize = 64 << 20         // whole request
+const maxIdempotencyKeyLen = 255     // bytes; matches typical DB index page size
 
 func (h *Handler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 	ct := r.Header.Get("Content-Type")
@@ -198,13 +238,22 @@ func (h *Handler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Rate limiting is per authenticated user. Unauthenticated callers are trusted
-	// backends (e.g. an exam server sending every student's code from one IP), so
-	// limiting them by IP would throttle a whole exam; admission control below
-	// still caps the queue depth.
+	// Per-user rate limiting for authenticated callers.
 	if hasAuth {
 		if rlResult := h.rateLimiter.Check(ctx, identity.UserID); !rlResult.Allowed {
 			metrics.RateLimitRejections.WithLabelValues("user").Inc()
+			retryAfter := int(math.Ceil(rlResult.RetryAfter.Seconds()))
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
+			jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+	}
+
+	// Per-IP rate limiting for unauthenticated callers (when enabled via AC_RATE_LIMIT_UNAUTH_PER_MINUTE).
+	// Disabled by default (perMinute=0) to preserve the existing trusted-backend behaviour.
+	if !hasAuth && h.unauthLimiter != nil {
+		if rlResult := h.unauthLimiter.CheckIP(ctx, remoteIP(r)); !rlResult.Allowed {
+			metrics.RateLimitRejections.WithLabelValues("ip").Inc()
 			retryAfter := int(math.Ceil(rlResult.RetryAfter.Seconds()))
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 			jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)
@@ -253,6 +302,10 @@ func (h *Handler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		sub.ProblemVersionID = &pvID
 	}
 	if req.IdempotencyKey != nil && *req.IdempotencyKey != "" {
+		if len(*req.IdempotencyKey) > maxIdempotencyKeyLen {
+			jsonError(w, "idempotency_key exceeds 255 bytes", http.StatusBadRequest)
+			return
+		}
 		sub.IdempotencyKey = req.IdempotencyKey
 	}
 
@@ -297,9 +350,24 @@ func (h *Handler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := executeResponse{JobID: jobID.String()}
+
+	// Issue a stream token for unauthenticated run-mode callers so they can open
+	// the SSE stream without needing to guess the job UUID. Authenticated callers
+	// use their JWT for ownership verification and do not need this token.
+	if !hasAuth && req.Mode == string(model.ModeRun) {
+		tok, err := newStreamToken(ctx, h.rdb, jobID.String())
+		if err != nil {
+			slog.Warn("failed to generate stream token", "job_id", jobID, "err", err)
+			// Non-fatal: the client will need auth to stream, but the job is queued.
+		} else {
+			resp.StreamToken = tok
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(executeResponse{JobID: jobID.String()}) //nolint:errcheck // best-effort: write the submission response
+	json.NewEncoder(w).Encode(resp) //nolint:errcheck // best-effort: write the submission response
 }
 
 type healthResponse struct {
@@ -398,4 +466,36 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck // best-effort: write the error body
+}
+
+type languageInfo struct {
+	ID                  string `json:"id"`
+	Compiled            bool   `json:"compiled"`
+	DefaultCPULimitMs   uint64 `json:"default_cpu_limit_ms"`
+	DefaultMemoryLimitKb uint64 `json:"default_memory_limit_kb"`
+	RunProcLimit        uint64 `json:"run_proc_limit"`
+}
+
+func (h *Handler) HandleLanguages(w http.ResponseWriter, r *http.Request) {
+	ids := make([]string, 0, len(sandbox.Languages))
+	for id := range sandbox.Languages {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	langs := make([]languageInfo, len(ids))
+	for i, id := range ids {
+		l := sandbox.Languages[id]
+		langs[i] = languageInfo{
+			ID:                   id,
+			Compiled:             l.Compiled,
+			DefaultCPULimitMs:    l.RunCPU / 1_000_000,
+			DefaultMemoryLimitKb: l.RunMem / 1024,
+			RunProcLimit:         l.RunProc,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(langs) //nolint:errcheck
 }

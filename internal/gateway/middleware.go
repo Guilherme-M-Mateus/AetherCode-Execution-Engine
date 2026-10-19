@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -88,6 +90,29 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			"request_id", reqID,
 		)
 	})
+}
+
+// remoteIP extracts the best-effort client IP for rate limiting.
+// Trusts X-Forwarded-For only to strip the rightmost proxy hop; the result
+// is used as a rate-limit key, not for authentication.
+func remoteIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// X-Forwarded-For: client, proxy1, proxy2 — take the leftmost entry
+		if idx := strings.Index(xff, ","); idx >= 0 {
+			xff = xff[:idx]
+		}
+		if ip := strings.TrimSpace(xff); ip != "" {
+			return ip
+		}
+	}
+	if xri := r.Header.Get("X-Real-Ip"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 var knownPaths = map[string]bool{

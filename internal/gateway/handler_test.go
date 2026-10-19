@@ -66,7 +66,7 @@ func TestHandleHealth_DegradedWhenDatabaseDown(t *testing.T) {
 	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
 	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
 
-	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, 8)
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, nil, 5000, 8)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -107,7 +107,7 @@ func TestHandleHealth_ResponseShape(t *testing.T) {
 	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
 	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
 
-	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, 4)
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, nil, 5000, 4)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -143,7 +143,7 @@ func TestHandleHealth_SandboxDown(t *testing.T) {
 	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
 	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
 
-	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, 8)
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, nil, 5000, 8)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -185,7 +185,7 @@ func TestHandleHealth_QueueDepths(t *testing.T) {
 	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
 	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
 
-	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, 8)
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, nil, 5000, 8)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -201,5 +201,71 @@ func TestHandleHealth_QueueDepths(t *testing.T) {
 	}
 	if resp.Queues["ac:submissions:run"] != 3 {
 		t.Errorf("run queue depth = %d, want 3", resp.Queues["ac:submissions:run"])
+	}
+}
+
+func TestHandleLanguages(t *testing.T) {
+	judgeSrv := fakeJudgeServer(t, "1.13.0")
+	judge := sandbox.NewClient(judgeSrv.URL, "test-token")
+	_, rdb := newTestRedis(t)
+	pool := newUnreachablePGPool(t)
+
+	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
+	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, nil, 5000, 8)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/languages", nil)
+	h.HandleLanguages(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var langs []languageInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &langs); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if len(langs) == 0 {
+		t.Fatal("expected at least one language")
+	}
+
+	// All sandbox languages must be present
+	present := make(map[string]bool, len(langs))
+	for _, l := range langs {
+		present[l.ID] = true
+	}
+	for id := range sandbox.Languages {
+		if !present[id] {
+			t.Errorf("language %q missing from response", id)
+		}
+	}
+
+	// Verify sorted order
+	for i := 1; i < len(langs); i++ {
+		if langs[i].ID < langs[i-1].ID {
+			t.Errorf("languages not sorted: %q before %q", langs[i-1].ID, langs[i].ID)
+		}
+	}
+
+	// Spot-check python
+	for _, l := range langs {
+		if l.ID == "python" {
+			if l.Compiled {
+				t.Error("python: compiled should be false")
+			}
+			if l.DefaultCPULimitMs != 2000 {
+				t.Errorf("python: default_cpu_limit_ms = %d, want 2000", l.DefaultCPULimitMs)
+			}
+			if l.DefaultMemoryLimitKb != 524288 {
+				t.Errorf("python: default_memory_limit_kb = %d, want 524288", l.DefaultMemoryLimitKb)
+			}
+		}
+		if l.ID == "cpp" {
+			if !l.Compiled {
+				t.Error("cpp: compiled should be true")
+			}
+		}
 	}
 }

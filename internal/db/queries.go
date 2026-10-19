@@ -212,12 +212,16 @@ func InsertResultsAndVerdict(ctx context.Context, pool *pgxpool.Pool, submission
 		}
 	}
 
+	// Always read the verdict update result regardless of prior test-result errors.
+	// Skipping this read would leave the batch cursor misaligned and hide whether
+	// the terminal state transition actually succeeded.
 	tag, err := br.Exec()
-	if err != nil {
+	switch {
+	case err != nil:
 		if firstErr == nil {
 			firstErr = fmt.Errorf("db: update verdict in batch: %w", err)
 		}
-	} else if tag.RowsAffected() == 0 {
+	case tag.RowsAffected() == 0:
 		if firstErr == nil {
 			firstErr = fmt.Errorf("db: verdict already written for %s", submissionID)
 		}

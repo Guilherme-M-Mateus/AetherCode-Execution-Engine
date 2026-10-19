@@ -18,8 +18,10 @@ func validConfig() Config {
 		StreamName:             "ac:submissions",
 		ConsumerGroup:          "workers",
 		AdmissionMaxQueueDepth: 5000,
-		RateLimitPerMinute:     30,
-		RateLimitBurst:         10,
+		RateLimitPerMinute:          30,
+		RateLimitBurst:              10,
+		RateLimitUnauthPerMinute:    0, // disabled by default
+		RateLimitUnauthBurst:        5,
 		SubmitWeight:           3,
 		JobTimeout:             90 * time.Second,
 		CompileCacheTTL:        60 * time.Second,

@@ -27,9 +27,11 @@ type Config struct {
 	OIDCAudience string
 
 	// Rate limiting
-	RateLimitPerMinute     int
-	RateLimitBurst         int
-	AdmissionMaxQueueDepth int
+	RateLimitPerMinute          int
+	RateLimitBurst              int
+	RateLimitUnauthPerMinute    int // per source IP, 0 = disabled
+	RateLimitUnauthBurst        int
+	AdmissionMaxQueueDepth      int
 
 	// CORS
 	CORSAllowedOrigins string
@@ -74,9 +76,11 @@ func Load() Config {
 		OIDCJWKSURL:  env("AC_OIDC_JWKS_URL", "http://127.0.0.1:8087/oauth/v2/keys"),
 		OIDCAudience: env("AC_OIDC_AUDIENCE", ""),
 
-		RateLimitPerMinute:     envInt("AC_RATE_LIMIT_PER_MINUTE", 30),
-		RateLimitBurst:         envInt("AC_RATE_LIMIT_BURST", 10),
-		AdmissionMaxQueueDepth: envInt("AC_ADMISSION_MAX_QUEUE_DEPTH", 5000),
+		RateLimitPerMinute:       envInt("AC_RATE_LIMIT_PER_MINUTE", 30),
+		RateLimitBurst:           envInt("AC_RATE_LIMIT_BURST", 10),
+		RateLimitUnauthPerMinute: envInt("AC_RATE_LIMIT_UNAUTH_PER_MINUTE", 0),
+		RateLimitUnauthBurst:     envInt("AC_RATE_LIMIT_UNAUTH_BURST", 5),
+		AdmissionMaxQueueDepth:   envInt("AC_ADMISSION_MAX_QUEUE_DEPTH", 5000),
 
 		CORSAllowedOrigins: env("AC_CORS_ALLOWED_ORIGINS", ""),
 
@@ -108,6 +112,8 @@ func (c Config) Validate() error {
 	check(c.AdmissionMaxQueueDepth > 0, "AdmissionMaxQueueDepth must be > 0")
 	check(c.RateLimitPerMinute > 0, "RateLimitPerMinute must be > 0")
 	check(c.RateLimitBurst > 0, "RateLimitBurst must be > 0")
+	check(c.RateLimitUnauthPerMinute >= 0, "RateLimitUnauthPerMinute must be >= 0")
+	check(c.RateLimitUnauthBurst > 0, "RateLimitUnauthBurst must be > 0")
 	check(c.GatewayAddr != "", "GatewayAddr is required")
 	check(c.DatabaseURL != "", "DatabaseURL is required")
 	check(c.RedisAddr != "", "RedisAddr is required")

@@ -135,7 +135,9 @@ func (w *Worker) process(ctx context.Context, submissionID string) error {
 	// Count only jobs we've actually claimed; deferred duration also starts here.
 	metrics.ActiveWorkers.Inc()
 	defer metrics.ActiveWorkers.Dec()
-	defer func() { metrics.JobProcessingDuration.Observe(time.Since(start).Seconds()) }()
+	// finalVerdict is set just before each return so the deferred histogram gets labels.
+	finalVerdict := string(model.VerdictInternalError)
+	defer func() { metrics.JobProcessingDuration.WithLabelValues(sub.Language, finalVerdict).Observe(time.Since(start).Seconds()) }()
 
 	// Load tests from the appropriate source
 	tests, limits, err := w.loadTests(jobCtx, sub)
@@ -179,13 +181,16 @@ func (w *Worker) process(ctx context.Context, submissionID string) error {
 			fileID = cached
 			log.Info("compile cache hit", "fileId", fileID)
 		} else {
+			compileStart := time.Now()
 			compileResult, err := w.compile(jobCtx, lang, sub.SourceCode)
+			metrics.CompileDuration.WithLabelValues(sub.Language).Observe(time.Since(compileStart).Seconds())
 			if err != nil {
 				return w.failSubmission(jobCtx, id, model.VerdictInternalError, err.Error(), log)
 			}
 
 			if compileResult.Status != sandbox.StatusAccepted {
 				stderr := compileResult.Files["stderr"]
+				finalVerdict = string(model.VerdictCompilationError)
 				return w.failSubmission(jobCtx, id, model.VerdictCompilationError, stderr, log)
 			}
 
@@ -272,6 +277,7 @@ func (w *Worker) process(ctx context.Context, submissionID string) error {
 		log.Error("failed to publish VERDICT event (DB has verdict, SSE client may not)", "err", err)
 	}
 
+	finalVerdict = string(overallVerdict)
 	metrics.JobsProcessedTotal.WithLabelValues(string(overallVerdict)).Inc()
 
 	log.Info("completed", "verdict", overallVerdict, "passed", passed, "total", len(tests))
@@ -280,6 +286,10 @@ func (w *Worker) process(ctx context.Context, submissionID string) error {
 
 func (w *Worker) loadTests(ctx context.Context, sub *model.Submission) ([]testData, sandbox.RunLimits, error) {
 	if sub.Mode == string(model.ModeSubmit) && sub.ProblemVersionID != nil {
+		pv, err := db.GetProblemVersion(ctx, w.pool, *sub.ProblemVersionID)
+		if err != nil {
+			return nil, sandbox.RunLimits{}, err
+		}
 		tcs, err := db.GetTestCases(ctx, w.pool, *sub.ProblemVersionID)
 		if err != nil {
 			return nil, sandbox.RunLimits{}, err
@@ -292,7 +302,15 @@ func (w *Worker) loadTests(ctx context.Context, sub *model.Submission) ([]testDa
 				IsSample:       tc.IsSample,
 			}
 		}
-		return tests, sandbox.RunLimits{}, nil
+		// Apply per-problem resource limits when the problem version specifies them.
+		var limits sandbox.RunLimits
+		if pv.CPULimitNs != nil && *pv.CPULimitNs > 0 {
+			limits.CPU = uint64(*pv.CPULimitNs) //nolint:gosec // non-negative DB value
+		}
+		if pv.MemoryLimit != nil && *pv.MemoryLimit > 0 {
+			limits.Memory = uint64(*pv.MemoryLimit) //nolint:gosec // non-negative DB value
+		}
+		return tests, limits, nil
 	}
 
 	// Run mode: tests and limits from Redis

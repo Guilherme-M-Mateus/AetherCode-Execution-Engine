@@ -138,12 +138,17 @@ func main() {
 		reapOrphans(ctx, pool, submitStream, runStream)
 	}()
 
-	// Rate limiter
+	// Rate limiters
 	rl := ratelimit.New(rdb, cfg.RateLimitPerMinute, cfg.RateLimitBurst)
+	var unauthRL *ratelimit.Limiter
+	if cfg.RateLimitUnauthPerMinute > 0 {
+		unauthRL = ratelimit.New(rdb, cfg.RateLimitUnauthPerMinute, cfg.RateLimitUnauthBurst)
+		slog.Info("unauth IP rate limiting enabled", "per_minute", cfg.RateLimitUnauthPerMinute, "burst", cfg.RateLimitUnauthBurst)
+	}
 
 	// HTTP Gateway
 	mux := http.NewServeMux()
-	h := gateway.NewHandler(pool, submitStream, runStream, pubsub, judge, rdb, rl, cfg.AdmissionMaxQueueDepth, cfg.WorkerCount)
+	h := gateway.NewHandler(pool, submitStream, runStream, pubsub, judge, rdb, rl, unauthRL, cfg.AdmissionMaxQueueDepth, cfg.WorkerCount)
 	h.Register(mux)
 
 	var handler http.Handler = mux

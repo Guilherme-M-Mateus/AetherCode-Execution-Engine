@@ -25,12 +25,19 @@ var (
 		Help:      "Total jobs processed by verdict.",
 	}, []string{"verdict"})
 
-	JobProcessingDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+	JobProcessingDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "ac",
 		Name:      "job_processing_duration_seconds",
 		Help:      "Time from dequeue to verdict in seconds.",
 		Buckets:   []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 90},
-	})
+	}, []string{"language", "verdict"})
+
+	CompileDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "ac",
+		Name:      "compile_duration_seconds",
+		Help:      "Time spent in the compilation step per language.",
+		Buckets:   []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 90},
+	}, []string{"language"})
 
 	ActiveWorkers = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "ac",

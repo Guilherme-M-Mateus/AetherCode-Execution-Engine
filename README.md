@@ -8,7 +8,7 @@ On-premise distributed code execution engine. Accepts code submissions over HTTP
 
 ![CI](https://github.com/stjosephsplacements/AetherCode-Execution-Engine/actions/workflows/ci.yml/badge.svg)
 ![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)
-![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
 
 **Status:** Production-hardened. Zero lost jobs verified at 5,000 concurrent connections / 15,000 submissions.
@@ -40,7 +40,7 @@ On-premise distributed code execution engine. Accepts code submissions over HTTP
 
 | Component | Version | Notes |
 |---|---|---|
-| Go | 1.25+ | Build toolchain |
+| Go | 1.27+ | Build toolchain |
 | PostgreSQL | 18 | Dedicated instance on `:5433` |
 | Redis | 7+ | On `127.0.0.1:6379` |
 | go-judge | v1.13.0 | Sandbox engine on `127.0.0.1:5050` |
@@ -81,7 +81,7 @@ cp deploy/env.example /etc/aethercode-exec/env
 curl http://127.0.0.1:5100/api/v1/health
 
 # End-to-end test (all languages, all verdicts)
-bash scripts/test_e2e.sh
+bash scripts/smoke_test.sh  # requires a running stack
 
 # Load test
 go build -o /tmp/loadgen ./cmd/loadgen
@@ -333,7 +333,7 @@ queue information.
 {
   "status": "healthy",
   "version": "v0.1.0",
-  "go_version": "go1.25.0",
+  "go_version": "go1.27.2",
   "uptime_seconds": 3612,
   "checks": {
     "database": "ok",
@@ -446,26 +446,24 @@ See `docs/benchmark-results.md` for full latency breakdowns and `docs/spike-resu
 
 ## Releases
 
-Releases flow through a gated four-branch pipeline:
+Releases flow through a two-branch pipeline:
 
 ```
-development  →  testing  →  staging  →  production
+development  →  production
 ```
 
 `development` is the default branch — all work starts here.
 
 | Branch | Promotion trigger |
 |---|---|
-| `development` | CI green on a merged PR |
-| `testing` | Automatic — the CI workflow opens and merges a PR from `development` once CI is green |
-| `staging` | Automatic — same, promoted from `testing` |
-| `production` | **Human gate** — a PR is opened automatically from `staging`, but merging requires one approving review from an org member |
+| `development` | CI green on a merged PR (topic branches auto-promote here) |
+| `production` | **Human gate** — a PR is opened automatically from `development` once CI is green, but merging requires one approving review from an org member |
 
-**Topic branches** (`feat/*`, `fix/*`, `security/*`, etc.) follow the same flow: once CI is green on the topic branch, a PR is opened into `development` automatically and merged when its CI passes.
+**Topic branches** (`feature/*`, `fix/*`, `security/*`, `ci/*`, `docs/*`, `chore/*`, `refactor/*`) auto-promote: once CI is green on the topic branch, a PR is opened into `development` and merged automatically.
 
-**Merge policy:** all promotions use a standard merge commit. Squash and rebase merges are disabled to preserve a linear, auditable history across the pipeline.
+**Merge policy:** squash merges only — keeps a clean, auditable `production` history.
 
-**Dependabot** dependency updates target `development` and are auto-approved and auto-merged once their CI is green, then flow through the normal pipeline.
+**Dependabot** dependency updates target `development` and are auto-approved and auto-merged once CI is green, then flow through the normal pipeline.
 
 ---
 

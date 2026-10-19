@@ -3,7 +3,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOFLAGS ?= -trimpath
 LDFLAGS ?= -s -w -X github.com/stjosephsplacements/AetherCode-Execution-Engine/internal/gateway.Version=$(VERSION)
 
-.PHONY: help build test vet lint fmt e2e loadgen up down clean
+.PHONY: help build test test-cover tidy vet lint fmt logs e2e loadgen up down clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS=":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -11,8 +11,19 @@ help: ## Show available targets
 build: ## Build the engine binary
 	go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/stj-exec
 
-test: ## Run unit tests
-	go test ./...
+test: ## Run unit tests with race detector
+	go test -race -count=1 ./...
+
+test-cover: ## Run tests with coverage report
+	go test -race -count=1 -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out
+
+tidy: ## Tidy and verify go modules
+	go mod tidy
+	go mod verify
+
+logs: ## Follow engine logs from docker compose
+	docker compose logs -f engine
 
 vet: ## Run go vet
 	go vet ./...

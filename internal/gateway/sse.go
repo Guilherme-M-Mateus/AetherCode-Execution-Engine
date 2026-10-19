@@ -66,11 +66,19 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Unauthenticated callers may only stream run-mode jobs they created in the same session;
-		// require at minimum that the job is in run mode (no ProblemVersionID) and that
-		// auth is disabled globally. In deployments with auth enabled, reject unauthenticated streams.
+		// Unauthenticated callers must present the stream_token issued at job creation.
+		// This prevents UUIDv7-based enumeration of other users' streams.
+		// Submit-mode jobs always require authentication (ProblemVersionID != nil).
 		if sub.ProblemVersionID != nil {
 			http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+			return
+		}
+		streamToken := r.URL.Query().Get("stream_token")
+		tokenCtx, tokenCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		valid := verifyStreamToken(tokenCtx, h.rdb, safeJobID, streamToken)
+		tokenCancel()
+		if !valid {
+			http.Error(w, `{"error":"invalid or missing stream_token"}`, http.StatusUnauthorized)
 			return
 		}
 	}

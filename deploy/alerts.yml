@@ -1,0 +1,80 @@
+groups:
+  - name: aethercode-exec
+    rules:
+      # ── Poison / dead-letter ────────────────────────────────────────────────
+      - alert: PoisonMessages
+        expr: increase(ac_poison_messages_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dead-lettered submission messages detected"
+          description: >
+            {{ $value }} message(s) have been dead-lettered in the last 5 minutes.
+            These submissions will never receive a verdict. Check logs for the
+            root cause (sandbox crash, DB write failure, or reclaimer bug).
+
+      # ── Worker stall ────────────────────────────────────────────────────────
+      - alert: AllWorkersIdle
+        expr: ac_active_workers == 0 and sum(ac_queue_depth) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "All workers idle with non-empty queue"
+          description: >
+            No workers are processing jobs but the queue depth is
+            {{ $value }}. Workers may have panicked and not restarted,
+            or the Redis consumer group may have stalled.
+
+      # ── Queue pressure ──────────────────────────────────────────────────────
+      - alert: HighQueueDepth
+        expr: ac_queue_depth > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue depth {{ $labels.stream }} is high ({{ $value }})"
+          description: >
+            The Redis stream {{ $labels.stream }} has exceeded 1000 entries
+            for 5 minutes. Consider scaling up workers or reducing submission rate.
+
+      # ── Internal error rate ─────────────────────────────────────────────────
+      - alert: HighInternalErrorRate
+        expr: >
+          rate(ac_jobs_processed_total{verdict="internal_error"}[5m])
+          / rate(ac_jobs_processed_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Internal error rate above 5%"
+          description: >
+            More than 5% of processed jobs are resulting in internal_error
+            verdicts. Check go-judge connectivity, DB health, and worker logs.
+
+      # ── Gateway 5xx rate ────────────────────────────────────────────────────
+      - alert: GatewayHighErrorRate
+        expr: >
+          rate(ac_http_requests_total{code=~"5.."}[5m])
+          / rate(ac_http_requests_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway 5xx error rate above 1%"
+          description: >
+            The HTTP gateway is returning 5xx responses at >1% of total traffic.
+            Check DB pool exhaustion, Redis connectivity, and application logs.
+
+      # ── Service down ────────────────────────────────────────────────────────
+      - alert: GatewayDown
+        expr: up{job="aethercode-exec"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AetherCode Execution Engine is down"
+          description: >
+            Prometheus cannot scrape the aethercode-exec metrics endpoint.
+            The process may have crashed or the host may be unreachable.

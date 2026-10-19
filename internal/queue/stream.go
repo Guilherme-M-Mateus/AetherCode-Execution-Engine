@@ -119,6 +119,7 @@ type DualConsumer struct {
 	group            string
 	submitWeight     int
 	blockReadTimeout time.Duration
+	reclaimMinIdle   time.Duration // how long a message must be idle before reclaim; defaults to 30s
 }
 
 func NewDualConsumer(rdb *redis.Client, submitStream, runStream, group string, submitWeight int, blockReadTimeout time.Duration) *DualConsumer {
@@ -132,6 +133,7 @@ func NewDualConsumer(rdb *redis.Client, submitStream, runStream, group string, s
 		group:            group,
 		submitWeight:     submitWeight,
 		blockReadTimeout: blockReadTimeout,
+		reclaimMinIdle:   30 * time.Second,
 	}
 }
 
@@ -315,7 +317,7 @@ func (dc *DualConsumer) reclaimStream(ctx context.Context, stream string, handle
 			Stream:   stream,
 			Group:    dc.group,
 			Consumer: "reclaimer",
-			MinIdle:  30 * time.Second,
+			MinIdle:  dc.reclaimMinIdle,
 			Start:    cursor,
 			Count:    50,
 		}).Result()
