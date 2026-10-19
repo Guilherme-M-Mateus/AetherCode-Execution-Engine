@@ -56,8 +56,15 @@ jobs:
 
       # Unit tests are hermetic (the rate limiter uses an in-process
       # miniredis), so no external services are required here.
-      - name: Test (race detector)
-        run: go test -race -count=1 ./...
+      - name: Test (race detector + coverage)
+        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+          flags: unit
+          fail_ci_if_error: false
 
   lint:
     runs-on: ubuntu-latest

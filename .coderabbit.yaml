@@ -1,31 +1,128 @@
 # CodeRabbit configuration
-# Reviews are enabled on every branch, including forks and non-default targets.
+# Full review on every PR — security, performance, correctness, Go idioms.
 # https://docs.coderabbit.ai/getting-started/configure-coderabbit
 
 language: "en-US"
+tone_instructions: "Be concise and direct. Lead with the most critical issues. Skip compliments."
+
+early_access: true
 
 reviews:
-  # Always review, regardless of target branch or fork origin.
   review_status: true
   auto_review:
     enabled: true
-    # Review PRs that target any branch — not just the default branch.
+    # Review PRs targeting ANY branch, including forks and draft PRs.
     base_branches:
       - ".*"
-    # Also review PRs opened from forks.
-    drafts: false
+    drafts: true
+    ignore_title_keywords:
+      - "WIP"
+      - "[skip ci]"
 
-  # Surface high-signal findings inline.
+  # High-signal file filters — skip generated/lockfiles.
   path_filters:
     - "!**/*.sum"
     - "!**/*.lock"
     - "!**/vendor/**"
     - "!**/testdata/**"
+    - "!**/.git/**"
 
-  profile: "chill"
+  # Assertive profile — surfaces real issues, not style nits.
+  profile: "assertive"
 
-  # Post a review-status comment so the team always knows CR ran.
+  # Never collapse the walkthrough summary.
   collapse_walkthrough: false
+
+  # Request changes on high-severity findings rather than just commenting.
+  request_changes_workflow: true
+
+  # Sequence diagram for complex PR flows.
+  sequence_diagrams: true
+
+  poem: false
+
+  # Per-path review instructions — CodeRabbit reads these before reviewing each path.
+  path_instructions:
+    - path: "internal/auth/**"
+      instructions: |
+        This is the OIDC JWT validation and user-provisioning layer.
+        Review for: JWT claim validation completeness (iss, aud, exp, sub),
+        timing-safe comparisons, cache invalidation correctness, SQL injection in
+        resolveUser/resolveTenant, token replay attacks, and privilege escalation
+        via role claim manipulation.
+
+    - path: "internal/sandbox/**"
+      instructions: |
+        This builds commands sent to the go-judge sandbox.
+        Review for: argument injection via language/source fields, resource limit
+        correctness (CPU/mem/proc), file path traversal in CopyIn, missing or
+        incorrect output size caps, and any path that could let user code escape
+        the sandbox or exfiltrate host data.
+
+    - path: "internal/worker/**"
+      instructions: |
+        Hot path: processes every code submission.
+        Review for: goroutine leaks, context cancellation propagation,
+        compile-cache invalidation correctness, race conditions on shared state,
+        verdict correctness (especially WA vs TLE edge cases), and any scenario
+        where a submission could be silently dropped without a verdict.
+
+    - path: "internal/queue/**"
+      instructions: |
+        Redis Streams consumer group logic — correctness is critical.
+        Review for: XAck reliability (must not ACK before handler succeeds),
+        reclaimer delivery-count off-by-one errors, message loss on panic,
+        pipeline atomicity in PrepareAndEnqueue, and correct handling of
+        Redis Nil errors vs network errors.
+
+    - path: "internal/gateway/**"
+      instructions: |
+        Public HTTP surface. Review for: input validation completeness,
+        CORS misconfiguration, SSE stream isolation (one user must not read
+        another's events), rate limit bypass paths, request-body size enforcement,
+        and Content-Type enforcement.
+
+    - path: "internal/db/**"
+      instructions: |
+        All DB interactions. Review for: missing parameterisation (SQLi),
+        transactions that should be atomic but aren't, missing index usage,
+        N+1 query patterns, and the advisory lock logic in Migrate.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        CI/CD pipelines. Review for: secret exfiltration via untrusted inputs
+        (pull_request_target risks), unpinned action versions, overly broad
+        permissions, script injection via ${{ github.event.* }}, and whether
+        the promote/auto-merge logic could be gamed to bypass the human gate.
+
+    - path: "**/*_test.go"
+      instructions: |
+        Review for: missing race-detector coverage, table tests that don't
+        cover error paths, tests that pass even when the logic is wrong
+        (asserting too little), and any test that requires a live external
+        service but doesn't skip gracefully.
+
+  knowledge_base:
+    # Learn from past PR discussions to improve future reviews.
+    learnings:
+      scope: auto
+    issues:
+      scope: auto
+    pull_requests:
+      scope: auto
+    jira:
+      project_keys: []
 
 chat:
   auto_reply: true
+
+# Automatically generate a summary comment on every PR.
+pull_requests:
+  summary:
+    auto_summary: true
+
+integrations:
+  jira:
+    usage: auto
+  linear:
+    usage: auto

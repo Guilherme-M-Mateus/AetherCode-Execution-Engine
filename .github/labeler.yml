@@ -1,0 +1,70 @@
+# Labels applied automatically by the labeler workflow.
+# https://github.com/actions/labeler
+
+"auth":
+  - changed-files:
+    - any-glob-to-any-file: "internal/auth/**"
+
+"sandbox":
+  - changed-files:
+    - any-glob-to-any-file: "internal/sandbox/**"
+
+"worker":
+  - changed-files:
+    - any-glob-to-any-file: "internal/worker/**"
+
+"queue":
+  - changed-files:
+    - any-glob-to-any-file: "internal/queue/**"
+
+"gateway":
+  - changed-files:
+    - any-glob-to-any-file: "internal/gateway/**"
+
+"database":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "internal/db/**"
+      - "migrations/**"
+
+"config":
+  - changed-files:
+    - any-glob-to-any-file: "internal/config/**"
+
+"metrics":
+  - changed-files:
+    - any-glob-to-any-file: "internal/metrics/**"
+
+"ci":
+  - changed-files:
+    - any-glob-to-any-file: ".github/**"
+
+"docker":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "docker/**"
+
+"dependencies":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "go.mod"
+      - "go.sum"
+
+"documentation":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "*.md"
+      - "docs/**"
+
+"deployment":
+  - changed-files:
+    - any-glob-to-any-file: "deploy/**"
+
+"security":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "internal/auth/**"
+      - "internal/ratelimit/**"
+      - "SECURITY.md"

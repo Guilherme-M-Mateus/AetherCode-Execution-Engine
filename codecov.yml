@@ -1,0 +1,31 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 60%           # fail the PR if overall drops below 60%
+        threshold: 2%         # allow up to 2% slip per PR
+        if_not_found: success # new repos start without a baseline
+    patch:
+      default:
+        target: 50%           # new code in the patch should be at least 50% covered
+        threshold: 5%
+
+  # Paths that don't need coverage (load generator, generated migration embed)
+  ignore:
+    - "cmd/loadgen/**"
+    - "migrations/**"
+    - "docs/**"
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true      # only comment when coverage changes
+
+flags:
+  unit:
+    paths:
+      - internal/
+    carryforward: true
+
+github_checks:
+  annotations: true
