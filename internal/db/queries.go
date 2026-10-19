@@ -215,7 +215,6 @@ func GetTestResults(ctx context.Context, pool *pgxpool.Pool, submissionID uuid.U
 func InsertResultsAndVerdict(ctx context.Context, pool *pgxpool.Pool, submissionID uuid.UUID,
 	results []model.TestResult, status model.Status, verdict model.Verdict, compileStderr string,
 	cpuTimeNs, memoryBytes int64, testCount, testsPassed int) error {
-
 	batch := &pgx.Batch{}
 
 	for _, r := range results {
