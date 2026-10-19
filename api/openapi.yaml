@@ -194,6 +194,60 @@ components:
             Must be passed as `stream_token` query parameter to `/api/v1/stream`.
           example: "dGhpcyBpcyBhIHRlc3Q"
 
+    SubmissionResponse:
+      type: object
+      required: [job_id, status, language, mode, results]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/Status"
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        language:
+          type: string
+        mode:
+          $ref: "#/components/schemas/Mode"
+        cpu_time_ns:
+          type: integer
+          format: int64
+        memory_bytes:
+          type: integer
+          format: int64
+        test_count:
+          type: integer
+        tests_passed:
+          type: integer
+        compile_stderr:
+          type: string
+          description: Present only when verdict=compilation_error.
+        created_at:
+          type: string
+          format: date-time
+        results:
+          type: array
+          items:
+            type: object
+            required: [test_index, verdict]
+            properties:
+              test_index:
+                type: integer
+              verdict:
+                $ref: "#/components/schemas/Verdict"
+              cpu_time_ns:
+                type: integer
+                format: int64
+              memory_bytes:
+                type: integer
+                format: int64
+              stdout_preview:
+                type: string
+                maxLength: 256
+              stderr_preview:
+                type: string
+                maxLength: 256
+
     ErrorResponse:
       type: object
       required:
@@ -725,6 +779,68 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/submissions/{id}:
+    get:
+      operationId: getSubmission
+      summary: Get a submission's status and results
+      description: |
+        Polling alternative to `/api/v1/stream`: returns the submission's current
+        status, verdict and stored per-test results. Useful after the SSE stream
+        has closed or was missed.
+
+        **Authentication:** same rules as `/api/v1/stream`. Authenticated callers
+        must own the submission (tenant + user ID). Unauthenticated callers may
+        only read `run`-mode jobs and must pass the `stream_token` returned from
+        `POST /api/v1/execute` (valid for 30 minutes).
+
+        In `submit` mode, `stdout_preview` and `stderr_preview` are only included
+        for sample tests.
+      tags:
+        - Execution
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the job (returned by POST /api/v1/execute).
+          schema:
+            type: string
+            format: uuid
+          example: "018f1d2e-3456-7890-abcd-ef0123456789"
+        - name: stream_token
+          in: query
+          required: false
+          description: Required for unauthenticated callers.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Submission found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionResponse"
+        "400":
+          description: Invalid submission id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid stream_token, or authentication required (submit mode).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Submission not found (or not owned by the caller).
           content:
             application/json:
               schema:

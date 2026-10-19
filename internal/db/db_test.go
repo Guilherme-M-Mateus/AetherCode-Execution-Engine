@@ -225,6 +225,20 @@ func TestInsertResultsAndVerdict(t *testing.T) {
 		t.Errorf("TestsPassed = %d, want 1", got.TestsPassed)
 	}
 
+	stored, err := db.GetTestResults(ctx, sharedPool, sub.ID)
+	if err != nil {
+		t.Fatalf("GetTestResults: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("GetTestResults len = %d, want 2", len(stored))
+	}
+	if stored[0].TestIndex != 0 || stored[0].StdoutPreview != "hello" || stored[0].CPUTimeNs != 100000 {
+		t.Errorf("stored[0] = %+v", stored[0])
+	}
+	if stored[1].TestIndex != 1 || stored[1].Verdict != model.VerdictWrongAnswer || stored[1].MemoryBytes != 2048 {
+		t.Errorf("stored[1] = %+v", stored[1])
+	}
+
 	// Second call must return "verdict already written".
 	err2 := db.InsertResultsAndVerdict(ctx, sharedPool, sub.ID, results,
 		model.StatusCompleted, model.VerdictWrongAnswer, "",

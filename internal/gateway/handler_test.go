@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/stjosephsplacements/AetherCode-Execution-Engine/internal/model"
 	"github.com/stjosephsplacements/AetherCode-Execution-Engine/internal/queue"
 	"github.com/stjosephsplacements/AetherCode-Execution-Engine/internal/sandbox"
 )
@@ -267,5 +269,64 @@ func TestHandleLanguages(t *testing.T) {
 				t.Error("cpp: compiled should be true")
 			}
 		}
+	}
+}
+
+func newSubmissionTestHandler(t *testing.T) *Handler {
+	t.Helper()
+	_, rdb := newTestRedis(t)
+	return NewHandler(newUnreachablePGPool(t), nil, nil, nil, nil, rdb, nil, nil, 5000, 8)
+}
+
+func TestHandleGetSubmission_InvalidID(t *testing.T) {
+	mux := http.NewServeMux()
+	newSubmissionTestHandler(t).Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/submissions/not-a-uuid", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleGetSubmission_DatabaseDown(t *testing.T) {
+	mux := http.NewServeMux()
+	newSubmissionTestHandler(t).Register(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/submissions/018f1d2e-3456-7890-abcd-ef0123456789", nil))
+
+	// A DB failure must not be reported as 404 (that would hide outages as "unknown id").
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+}
+
+func TestBuildSubmissionResponse_PreviewFiltering(t *testing.T) {
+	results := []model.TestResult{
+		{TestIndex: 0, Verdict: model.VerdictAccepted, StdoutPreview: "sample-out"},
+		{TestIndex: 1, Verdict: model.VerdictWrongAnswer, StdoutPreview: "hidden-out"},
+	}
+	tests := []model.TestCase{{IsSample: true}, {IsSample: false}}
+
+	submit := buildSubmissionResponse(&model.Submission{ID: uuid.New(), Mode: string(model.ModeSubmit)}, results, tests)
+	if submit.Results[0].StdoutPreview == nil || *submit.Results[0].StdoutPreview != "sample-out" {
+		t.Errorf("submit mode: sample test preview should be kept, got %v", submit.Results[0].StdoutPreview)
+	}
+	if submit.Results[1].StdoutPreview != nil || submit.Results[1].StderrPreview != nil {
+		t.Errorf("submit mode: non-sample test previews should be omitted")
+	}
+
+	run := buildSubmissionResponse(&model.Submission{ID: uuid.New(), Mode: string(model.ModeRun)}, results, nil)
+	if run.Results[1].StdoutPreview == nil || *run.Results[1].StdoutPreview != "hidden-out" {
+		t.Errorf("run mode: all previews should be kept")
+	}
+
+	body, _ := json.Marshal(submit)
+	var raw map[string]any
+	_ = json.Unmarshal(body, &raw)
+	if _, ok := raw["results"].([]any)[1].(map[string]any)["stdout_preview"]; ok {
+		t.Errorf("submit mode JSON: stdout_preview key should be absent for non-sample test")
 	}
 }
