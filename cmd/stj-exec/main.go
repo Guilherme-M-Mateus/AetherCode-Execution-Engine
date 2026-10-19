@@ -155,7 +155,18 @@ func main() {
 
 	// Auth (innermost — runs closest to the handler)
 	if cfg.AuthEnabled {
-		authMw, err := auth.NewMiddleware(cfg.OIDCIssuer, cfg.OIDCJWKSURL, cfg.OIDCAudience, pool)
+		var appPool *pgxpool.Pool
+		if cfg.DatabaseAppURL != "" {
+			var appErr error
+			appPool, appErr = db.ConnectAppRole(ctx, cfg.DatabaseAppURL)
+			if appErr != nil {
+				slog.Error("app-role database connection failed", "err", appErr)
+				os.Exit(1)
+			}
+			defer appPool.Close()
+			slog.Info("app-role pool connected (RLS active)", "url_prefix", cfg.DatabaseAppURL[:min(len(cfg.DatabaseAppURL), 30)])
+		}
+		authMw, err := auth.NewMiddleware(cfg.OIDCIssuer, cfg.OIDCJWKSURL, cfg.OIDCAudience, pool, appPool)
 		if err != nil {
 			slog.Error("auth middleware init failed", "err", err)
 			os.Exit(1)
