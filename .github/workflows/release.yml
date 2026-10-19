@@ -20,7 +20,7 @@ jobs:
       REGISTRY: ghcr.io
       IMAGE_NAME: ${{ github.repository_owner }}/aethercode-execution-engine
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # goreleaser needs full history for changelogs
 
