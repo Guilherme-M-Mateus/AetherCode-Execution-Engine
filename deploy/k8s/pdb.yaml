@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aethercode-exec-pdb
+  namespace: aethercode
+spec:
+  # Always keep at least 1 replica available during node drains or rolling updates.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aethercode-exec
