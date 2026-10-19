@@ -21,18 +21,18 @@ type Config struct {
 	LogFormat     string
 
 	// Auth (Zitadel OIDC)
-	AuthEnabled      bool
-	OIDCIssuer       string
-	OIDCJWKSURL      string
-	OIDCAudience     string
-	DatabaseAppURL   string // optional: connects as aethercode_app for RLS-enforced auth queries
+	AuthEnabled    bool
+	OIDCIssuer     string
+	OIDCJWKSURL    string
+	OIDCAudience   string
+	DatabaseAppURL string // optional: connects as aethercode_app for RLS-enforced auth queries
 
 	// Rate limiting
-	RateLimitPerMinute          int
-	RateLimitBurst              int
-	RateLimitUnauthPerMinute    int // per source IP, 0 = disabled
-	RateLimitUnauthBurst        int
-	AdmissionMaxQueueDepth      int
+	RateLimitPerMinute       int
+	RateLimitBurst           int
+	RateLimitUnauthPerMinute int // per source IP, 0 = disabled
+	RateLimitUnauthBurst     int
+	AdmissionMaxQueueDepth   int
 
 	// CORS
 	CORSAllowedOrigins string
