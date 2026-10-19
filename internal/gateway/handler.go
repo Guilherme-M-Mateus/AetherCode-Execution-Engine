@@ -125,11 +125,11 @@ type executeResponse struct {
 	StreamToken string `json:"stream_token,omitempty"` // unauthenticated callers must present this to stream
 }
 
-const maxSourceSize = 64 * 1024      // 64KB
+const maxSourceSize = 64 * 1024 // 64KB
 const maxTests = 100
-const maxTestDataSize = 8 << 20      // 8MB per test input/output
-const maxBodySize = 64 << 20         // whole request
-const maxIdempotencyKeyLen = 255     // bytes; matches typical DB index page size
+const maxTestDataSize = 8 << 20  // 8MB per test input/output
+const maxBodySize = 64 << 20     // whole request
+const maxIdempotencyKeyLen = 255 // bytes; matches typical DB index page size
 
 func (h *Handler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 	ct := r.Header.Get("Content-Type")
@@ -469,11 +469,11 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 }
 
 type languageInfo struct {
-	ID                  string `json:"id"`
-	Compiled            bool   `json:"compiled"`
-	DefaultCPULimitMs   uint64 `json:"default_cpu_limit_ms"`
+	ID                   string `json:"id"`
+	Compiled             bool   `json:"compiled"`
+	DefaultCPULimitMs    uint64 `json:"default_cpu_limit_ms"`
 	DefaultMemoryLimitKb uint64 `json:"default_memory_limit_kb"`
-	RunProcLimit        uint64 `json:"run_proc_limit"`
+	RunProcLimit         uint64 `json:"run_proc_limit"`
 }
 
 func (h *Handler) HandleLanguages(w http.ResponseWriter, r *http.Request) {
