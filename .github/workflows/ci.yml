@@ -25,10 +25,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
@@ -36,8 +36,6 @@ jobs:
       - name: Module tidy check
         run: |
           go mod tidy
-          # --exit-code (the canonical flag) is portable across git versions;
-          # `-- go.mod go.sum` forces pathspec form. Exits 1 if tidy changed them.
           git diff --exit-code -- go.mod go.sum
 
       - name: Build
@@ -64,22 +62,46 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
       - name: golangci-lint
-        # golangci-lint v2 (config schema v2 — see .golangci.yml). v1.64 was
-        # built with Go 1.24 and refuses to lint this module's go 1.25
-        # directive; v2 is built with Go 1.25+. Pinned to v2.12.2 — the
-        # release this config and codebase were verified against, so CI and
-        # local `golangci-lint run` lint identically. Note: golangci-lint v2
-        # requires golangci-lint-action v7 (v6 only supports the v1 line).
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           args: --timeout=5m
+
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+          queries: security-extended,security-and-quality
+
+      - name: Build for CodeQL
+        run: go build ./...
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:go

@@ -1,0 +1,10 @@
+# Global owners — required reviewers for every PR
+* @Shreesh-Sree
+
+# Security-sensitive paths need an extra review
+/internal/auth/         @Shreesh-Sree
+/internal/sandbox/      @Shreesh-Sree
+/internal/ratelimit/    @Shreesh-Sree
+/deploy/                @Shreesh-Sree
+/Dockerfile             @Shreesh-Sree
+/.github/workflows/     @Shreesh-Sree

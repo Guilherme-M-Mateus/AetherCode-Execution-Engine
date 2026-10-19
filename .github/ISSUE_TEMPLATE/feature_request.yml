@@ -1,0 +1,39 @@
+name: Feature Request
+description: Propose a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem does this solve? What use case drives the request?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you want. API changes, config flags, behavioral changes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you consider and why did you rule it out?
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Affected components
+      options:
+        - label: HTTP Gateway (`internal/gateway`)
+        - label: Worker / Judge (`internal/worker`)
+        - label: Queue / Streams (`internal/queue`)
+        - label: Auth (`internal/auth`)
+        - label: Sandbox / Languages (`internal/sandbox`)
+        - label: Metrics / Observability (`internal/metrics`)
+        - label: Config / Deployment (`internal/config`, `deploy/`)
+        - label: Docker / CI

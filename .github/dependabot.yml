@@ -1,8 +1,3 @@
-# Dependabot configuration
-# Docs: https://docs.github.com/github/creating-an-updated-dependencies-policy/keeping-dependencies-up-to-date-automatically-with-dependabot
-#
-# On a public repo, Dependabot security updates are enabled automatically once
-# this file exists; it governs routine version-update PRs below.
 version: 2
 
 updates:
@@ -11,24 +6,56 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    target-branch: "development"
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
       - "gomod"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+      prometheus:
+        patterns:
+          - "github.com/prometheus/*"
+      pgx:
+        patterns:
+          - "github.com/jackc/*"
 
   # Container image versions (Dockerfile + docker-compose.yml)
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    target-branch: "development"
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "docker"
+    commit-message:
+      prefix: "chore(deps)"
 
   # GitHub Actions workflow versions (.github/workflows)
   - package-ecosystem: "github-actions"
     directory: ".github/workflows"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    target-branch: "development"
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
       - "github-actions"
+    commit-message:
+      prefix: "chore(deps)"
