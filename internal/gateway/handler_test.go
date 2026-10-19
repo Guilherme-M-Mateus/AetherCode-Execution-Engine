@@ -66,7 +66,7 @@ func TestHandleHealth_DegradedWhenDatabaseDown(t *testing.T) {
 	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
 	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
 
-	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, false, 8)
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, 8)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -107,7 +107,7 @@ func TestHandleHealth_ResponseShape(t *testing.T) {
 	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
 	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
 
-	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, false, 4)
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, 4)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -143,7 +143,7 @@ func TestHandleHealth_SandboxDown(t *testing.T) {
 	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
 	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
 
-	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, false, 8)
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, 8)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -185,7 +185,7 @@ func TestHandleHealth_QueueDepths(t *testing.T) {
 	submitStream := queue.NewStream(rdb, "ac:submissions:submit", "workers")
 	runStream := queue.NewStream(rdb, "ac:submissions:run", "workers")
 
-	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, false, 8)
+	h := NewHandler(pool, submitStream, runStream, nil, judge, rdb, nil, 5000, 8)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
