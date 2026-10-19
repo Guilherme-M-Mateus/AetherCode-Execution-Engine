@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aethercode-exec
+  namespace: aethercode
+  labels:
+    app.kubernetes.io/name: aethercode-exec
+    app.kubernetes.io/component: engine
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aethercode-exec
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aethercode-exec
+        app.kubernetes.io/component: engine
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6060"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 135  # workerDrainTimeout (120s) + margin
+      containers:
+        - name: engine
+          image: ghcr.io/stjosephsplacements/aethercode-execution-engine:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 5100
+              protocol: TCP
+            - name: metrics
+              containerPort: 6060
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: aethercode-exec-config
+            - secretRef:
+                name: aethercode-exec-secrets
+          env:
+            - name: AC_AUTH_ENABLED
+              value: "true"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

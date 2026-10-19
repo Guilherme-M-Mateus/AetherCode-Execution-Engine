@@ -1,0 +1,843 @@
+openapi: "3.1.0"
+
+info:
+  title: AetherCode Execution Engine API
+  version: "1.0.0"
+  description: |
+    On-premise distributed code execution engine. Accepts code submissions over HTTP,
+    runs them in isolated sandboxes, and streams verdicts back via Server-Sent Events.
+
+    ## Authentication
+
+    Endpoints are protected by OIDC Bearer JWT (Zitadel). Pass the token in the
+    `Authorization: Bearer <token>` header.
+
+    - `POST /api/v1/execute` (submit mode) — **required**
+    - `POST /api/v1/execute` (run mode) — optional; unauthenticated callers receive a `stream_token`
+    - `GET /api/v1/stream` — optional; unauthenticated callers must supply `stream_token`
+    - `GET /api/v1/health` — public
+    - `GET /api/v1/languages` — public
+
+    ## Rate Limiting
+
+    Authenticated callers are rate-limited per user (`Retry-After` header on 429).
+    Unauthenticated callers may be rate-limited per IP when `AC_RATE_LIMIT_UNAUTH_PER_MINUTE > 0`.
+
+  contact:
+    name: AetherCode
+    url: https://github.com/stjosephsplacements/AetherCode-Execution-Engine
+  license:
+    name: AGPL-3.0
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+
+servers:
+  - url: http://localhost:5100
+    description: Local development
+  - url: https://exec.example.com
+    description: Production (replace with your deployment URL)
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OIDC JWT issued by Zitadel (or any compliant IdP configured via AC_OIDC_ISSUER)
+
+  schemas:
+
+    # ── Enums ──────────────────────────────────────────────────────────────────
+
+    Language:
+      type: string
+      enum:
+        - bash
+        - c
+        - cpp
+        - csharp
+        - go
+        - java
+        - javascript
+        - kotlin
+        - python
+        - rust
+        - sqlite
+        - typescript
+      description: Identifier of the programming language / runtime.
+
+    Mode:
+      type: string
+      enum:
+        - run
+        - submit
+      description: |
+        `run` — caller-supplied test cases, results fully visible.
+        `submit` — test cases loaded from the problem version, hidden test outputs masked.
+
+    Verdict:
+      type: string
+      enum:
+        - accepted
+        - wrong_answer
+        - time_limit
+        - memory_limit
+        - runtime_error
+        - compilation_error
+        - internal_error
+        - output_limit
+      description: Final verdict for the submission or a single test case.
+
+    Status:
+      type: string
+      enum:
+        - queued
+        - compiling
+        - running
+        - completed
+        - failed
+      description: Lifecycle status of a submission.
+
+    # ── Request / Response bodies ──────────────────────────────────────────────
+
+    TestInput:
+      type: object
+      required:
+        - input
+        - expected_output
+      properties:
+        input:
+          type: string
+          maxLength: 8388608
+          description: stdin fed to the program (max 8 MB).
+          example: "5\n1 2 3 4 5\n"
+        expected_output:
+          type: string
+          maxLength: 8388608
+          description: Expected stdout (max 8 MB). Comparison is whitespace-normalised.
+          example: "15\n"
+
+    ExecuteRequest:
+      type: object
+      required:
+        - language
+        - source_code
+      properties:
+        language:
+          $ref: "#/components/schemas/Language"
+        source_code:
+          type: string
+          minLength: 1
+          maxLength: 65536
+          description: Source code to execute (max 64 KB).
+        mode:
+          $ref: "#/components/schemas/Mode"
+          default: run
+        problem_version_id:
+          type: string
+          format: uuid
+          description: |
+            Required when `mode=submit`. UUID of the problem version whose
+            test cases will be used. Must belong to the caller's tenant.
+          example: "018f1d2e-3456-7890-abcd-ef0123456789"
+        idempotency_key:
+          type: string
+          maxLength: 255
+          description: |
+            Client-supplied deduplication key. If a submission with the same
+            `(tenant, user, idempotency_key, mode)` already exists, the existing
+            `job_id` is returned without re-executing. Optional.
+          example: "exam-2024-q3-user42-attempt1"
+        tests:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/TestInput"
+          description: |
+            Required when `mode=run`. Caller-supplied test cases. Maximum 100 tests.
+        time_limit_ms:
+          type: integer
+          format: int64
+          minimum: 100
+          maximum: 20000
+          description: |
+            Per-test CPU time limit override in milliseconds (100–20000).
+            Omit to use the language default.
+          example: 1000
+        memory_limit_kb:
+          type: integer
+          format: int64
+          minimum: 16384
+          maximum: 2097152
+          description: |
+            Per-test memory limit override in kilobytes (16384–2097152 = 16 MB–2 GB).
+            Omit to use the language default.
+          example: 262144
+
+    ExecuteResponse:
+      type: object
+      required:
+        - job_id
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: UUIDv7 identifying the submitted job. Use with `/api/v1/stream`.
+          example: "018f1d2e-3456-7890-abcd-ef0123456789"
+        stream_token:
+          type: string
+          description: |
+            Present only for unauthenticated `run`-mode submissions.
+            Must be passed as `stream_token` query parameter to `/api/v1/stream`.
+          example: "dGhpcyBpcyBhIHRlc3Q"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          example: "source_code exceeds 64KB"
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - version
+        - go_version
+        - uptime_seconds
+        - checks
+        - workers
+        - queues
+      properties:
+        status:
+          type: string
+          enum:
+            - healthy
+            - degraded
+            - unhealthy
+          description: |
+            `healthy` — all subsystems OK.
+            `degraded` — sandbox or Redis has an issue (DB is fine, submissions accepted).
+            `unhealthy` — database unreachable; submissions cannot be persisted.
+        version:
+          type: string
+          description: Engine binary version (set at build time via `-ldflags`).
+          example: "v1.2.3"
+        go_version:
+          type: string
+          description: Go runtime version.
+          example: "go1.27.2"
+        uptime_seconds:
+          type: integer
+          description: Seconds since the engine process started.
+          example: 3612
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum:
+              - ok
+              - error
+          description: Per-subsystem health checks (`database`, `sandbox`, `redis`).
+          example:
+            database: ok
+            sandbox: ok
+            redis: ok
+        sandbox_version:
+          type: string
+          description: go-judge build version string (omitted if sandbox is unreachable).
+          example: "1.13.0"
+        workers:
+          type: object
+          required:
+            - active
+            - configured
+          properties:
+            active:
+              type: integer
+              description: Workers currently processing a job.
+              example: 3
+            configured:
+              type: integer
+              description: Total workers configured (AC_WORKER_COUNT).
+              example: 8
+        queues:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: Approximate depth of each Redis stream queue.
+          example:
+            "ac:submissions:submit": 12
+            "ac:submissions:run": 4
+
+    LanguageInfo:
+      type: object
+      required:
+        - id
+        - compiled
+        - default_cpu_limit_ms
+        - default_memory_limit_kb
+        - run_proc_limit
+      properties:
+        id:
+          $ref: "#/components/schemas/Language"
+        compiled:
+          type: boolean
+          description: Whether the language has a separate compile step before execution.
+          example: true
+        default_cpu_limit_ms:
+          type: integer
+          format: int64
+          description: Default per-test CPU time limit in milliseconds.
+          example: 2000
+        default_memory_limit_kb:
+          type: integer
+          format: int64
+          description: Default per-test memory limit in kilobytes.
+          example: 524288
+        run_proc_limit:
+          type: integer
+          format: int64
+          description: Maximum number of processes/threads the submission may spawn.
+          example: 10
+
+    # ── SSE event shapes ───────────────────────────────────────────────────────
+
+    SSEEventQueued:
+      type: object
+      description: Emitted immediately after the job is enqueued.
+      required:
+        - id
+        - job_id
+        - type
+        - ts
+      properties:
+        id:
+          type: string
+          description: Monotonic event ID (`<job_id>:<epoch>-<seq>`). Use as `Last-Event-ID` for reconnect.
+          example: "018f1d2e-3456-7890-abcd-ef0123456789:1700000000000000000-1"
+        job_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [QUEUED]
+        ts:
+          type: integer
+          format: int64
+          description: Unix millisecond timestamp.
+        data:
+          nullable: true
+
+    SSEEventCompiling:
+      type: object
+      description: Emitted when a compiled-language submission enters the compile step.
+      required: [id, job_id, type, ts]
+      properties:
+        id:
+          type: string
+        job_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [COMPILING]
+        ts:
+          type: integer
+          format: int64
+        data:
+          nullable: true
+
+    SSEEventRunning:
+      type: object
+      description: Emitted when test execution begins.
+      required: [id, job_id, type, ts]
+      properties:
+        id:
+          type: string
+        job_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [RUNNING]
+        ts:
+          type: integer
+          format: int64
+        data:
+          nullable: true
+
+    SSEEventTestResult:
+      type: object
+      description: Emitted after each batch of tests completes.
+      required: [id, job_id, type, ts, data]
+      properties:
+        id:
+          type: string
+        job_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [TEST_RESULT]
+        ts:
+          type: integer
+          format: int64
+        data:
+          type: object
+          required: [completed, total, passed, batch_from, batch_to]
+          properties:
+            completed:
+              type: integer
+              description: Total tests completed so far.
+            total:
+              type: integer
+              description: Total tests in the submission.
+            passed:
+              type: integer
+              description: Tests passed so far.
+            batch_from:
+              type: integer
+              description: Zero-based index of the first test in this batch.
+            batch_to:
+              type: integer
+              description: Zero-based index of the last test in this batch.
+
+    SSEEventVerdict:
+      type: object
+      description: |
+        Terminal event. Always emitted last. The SSE stream closes after this event.
+      required: [id, job_id, type, ts, data]
+      properties:
+        id:
+          type: string
+        job_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [VERDICT]
+        ts:
+          type: integer
+          format: int64
+        data:
+          type: object
+          required: [verdict]
+          properties:
+            verdict:
+              $ref: "#/components/schemas/Verdict"
+            tests_passed:
+              type: integer
+              description: Number of test cases that passed (omitted on compile error).
+            test_count:
+              type: integer
+              description: Total number of test cases (omitted on compile error).
+            cpu_time_ns:
+              type: integer
+              format: int64
+              description: Total CPU time across all tests in nanoseconds.
+            memory_bytes:
+              type: integer
+              format: int64
+              description: Peak memory usage in bytes across all tests.
+            compile_stderr:
+              type: string
+              description: Compiler error output (present only when verdict=compilation_error).
+            results:
+              type: array
+              description: |
+                Per-test results. In `submit` mode, `stdout_preview` and `stderr_preview`
+                are only included for sample tests.
+              items:
+                type: object
+                required: [test_index, verdict]
+                properties:
+                  test_index:
+                    type: integer
+                  verdict:
+                    $ref: "#/components/schemas/Verdict"
+                  cpu_time_ns:
+                    type: integer
+                    format: int64
+                  memory_bytes:
+                    type: integer
+                    format: int64
+                  stdout_preview:
+                    type: string
+                    maxLength: 256
+                  stderr_preview:
+                    type: string
+                    maxLength: 256
+                  stdout:
+                    type: string
+                    description: Full stdout (run mode only).
+                  stderr:
+                    type: string
+                    description: Full stderr (run mode only).
+
+paths:
+
+  /api/v1/execute:
+    post:
+      operationId: execute
+      summary: Submit code for execution
+      description: |
+        Accepts a source code submission and enqueues it for sandboxed execution.
+
+        **Run mode** (`mode=run`): caller supplies test cases. No authentication
+        required; a `stream_token` is returned for use with the SSE endpoint.
+
+        **Submit mode** (`mode=submit`): test cases are loaded from a problem version
+        in the database. Authentication **required**. The caller must own the
+        `problem_version_id` within their tenant.
+
+        The response is `201 Created` with a `job_id`. Poll the job's verdict by
+        opening the SSE stream at `GET /api/v1/stream?job_id=<job_id>`.
+      tags:
+        - Execution
+      security:
+        - {}          # unauthenticated (run mode)
+        - bearerAuth: []  # required for submit mode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteRequest"
+            examples:
+              run_python:
+                summary: Run mode — Python Hello World
+                value:
+                  language: python
+                  source_code: "print('Hello, World!')"
+                  mode: run
+                  tests:
+                    - input: ""
+                      expected_output: "Hello, World!"
+              run_cpp_with_limits:
+                summary: Run mode — C++ with custom limits
+                value:
+                  language: cpp
+                  source_code: |
+                    #include <iostream>
+                    int main() {
+                        int n; std::cin >> n;
+                        std::cout << n * 2 << std::endl;
+                    }
+                  mode: run
+                  time_limit_ms: 500
+                  memory_limit_kb: 65536
+                  tests:
+                    - input: "21"
+                      expected_output: "42"
+              submit_mode:
+                summary: Submit mode — authenticated, problem version
+                value:
+                  language: java
+                  source_code: |
+                    public class Main {
+                        public static void main(String[] args) {
+                            System.out.println("Hello");
+                        }
+                    }
+                  mode: submit
+                  problem_version_id: "018f1d2e-3456-7890-abcd-ef0123456789"
+                  idempotency_key: "exam-2024-q1-user42-attempt1"
+      responses:
+        "201":
+          description: Submission accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteResponse"
+              examples:
+                run_mode:
+                  summary: Run mode response (includes stream_token)
+                  value:
+                    job_id: "018f1d2e-3456-7890-abcd-ef0123456789"
+                    stream_token: "dGhpcyBpcyBhIHRlc3Q"
+                submit_mode:
+                  summary: Submit mode response
+                  value:
+                    job_id: "018f1d2e-3456-7890-abcd-ef0123456789"
+        "200":
+          description: Idempotent response — submission with this key already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteResponse"
+        "400":
+          description: Invalid request (bad language, source too large, missing fields, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required (submit mode without token, or invalid token).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: problem_version_id not found or not accessible to this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Content-Type is not application/json.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded or queue at capacity.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error (UUID generation failed, DB unavailable, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/stream:
+    get:
+      operationId: streamEvents
+      summary: Stream job events via Server-Sent Events
+      description: |
+        Opens a Server-Sent Events stream for a job. Each event is a JSON-encoded
+        `Event` object with fields `id`, `job_id`, `type`, `data`, and `ts`.
+
+        **Reconnect:** if the connection drops before a `VERDICT` event, reconnect
+        with the `Last-Event-ID` header set to the last received event ID. The
+        server will replay all stored events newer than that ID (events are kept
+        for 10 minutes).
+
+        **Termination:** the stream closes automatically after the terminal `VERDICT`
+        event. The maximum stream lifetime is 5 minutes; if no verdict arrives within
+        that window, a synthetic `VERDICT` with `verdict=internal_error` is emitted.
+
+        **Authentication:** Authenticated callers are verified by JWT ownership
+        (tenant + user ID). Unauthenticated callers must pass the `stream_token`
+        returned from `POST /api/v1/execute`. Submit-mode jobs always require auth.
+      tags:
+        - Execution
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: job_id
+          in: query
+          required: true
+          description: UUID of the job to stream (returned by POST /api/v1/execute).
+          schema:
+            type: string
+            format: uuid
+          example: "018f1d2e-3456-7890-abcd-ef0123456789"
+        - name: stream_token
+          in: query
+          required: false
+          description: |
+            Required for unauthenticated callers. The token returned in the
+            `stream_token` field of the execute response.
+          schema:
+            type: string
+          example: "dGhpcyBpcyBhIHRlc3Q"
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Last received event ID for reconnect replay.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: |
+            SSE stream. Content-Type is `text/event-stream`.
+
+            Each SSE frame has the form:
+            ```
+            id: <event-id>
+            event: <event-type>
+            data: <json-payload>
+
+            ```
+
+            Event sequence for a successful compiled submission:
+            `QUEUED → COMPILING → RUNNING → TEST_RESULT (×N batches) → VERDICT`
+
+            Event sequence for an interpreted submission:
+            `QUEUED → RUNNING → TEST_RESULT (×N batches) → VERDICT`
+
+            Event sequence for a compile error:
+            `QUEUED → COMPILING → VERDICT(compilation_error)`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Newline-delimited SSE frames. Each `data:` line contains a JSON
+                  object matching one of the SSEEvent schemas.
+              examples:
+                full_sequence:
+                  summary: Successful Python run
+                  value: |
+                    id: 018f1d2e-...:1700000000-1
+                    event: QUEUED
+                    data: {"id":"018f1d2e-...:1700000000-1","job_id":"018f1d2e-...","type":"QUEUED","ts":1700000000000}
+
+                    id: 018f1d2e-...:1700000001-2
+                    event: RUNNING
+                    data: {"id":"018f1d2e-...:1700000001-2","job_id":"018f1d2e-...","type":"RUNNING","ts":1700000001000}
+
+                    id: 018f1d2e-...:1700000002-3
+                    event: TEST_RESULT
+                    data: {"id":"...","job_id":"...","type":"TEST_RESULT","ts":1700000002000,"data":{"completed":3,"total":3,"passed":3,"batch_from":0,"batch_to":2}}
+
+                    id: 018f1d2e-...:1700000002-4
+                    event: VERDICT
+                    data: {"id":"...","job_id":"...","type":"VERDICT","ts":1700000002500,"data":{"verdict":"accepted","tests_passed":3,"test_count":3,"cpu_time_ns":54321000,"memory_bytes":4096000}}
+
+        "400":
+          description: Missing or invalid job_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid stream_token / JWT.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/health:
+    get:
+      operationId: health
+      summary: Engine health check
+      description: |
+        Returns the health status of the engine and its dependencies.
+        Used by load balancers and Kubernetes readiness probes.
+
+        HTTP status:
+        - `200` — healthy or degraded (engine is accepting submissions)
+        - `503` — unhealthy (database unreachable; submissions cannot be persisted)
+      tags:
+        - Operations
+      security:
+        - {}
+      responses:
+        "200":
+          description: Engine is healthy or degraded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: healthy
+                version: v1.2.3
+                go_version: go1.27.2
+                uptime_seconds: 3612
+                checks:
+                  database: ok
+                  sandbox: ok
+                  redis: ok
+                sandbox_version: "1.13.0"
+                workers:
+                  active: 3
+                  configured: 8
+                queues:
+                  "ac:submissions:submit": 0
+                  "ac:submissions:run": 2
+        "503":
+          description: Engine is unhealthy (database down).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: unhealthy
+                version: v1.2.3
+                go_version: go1.27.2
+                uptime_seconds: 42
+                checks:
+                  database: error
+                  sandbox: ok
+                  redis: ok
+                workers:
+                  active: 0
+                  configured: 8
+                queues: {}
+
+  /api/v1/languages:
+    get:
+      operationId: listLanguages
+      summary: List supported languages
+      description: |
+        Returns all languages supported by the engine with their default
+        resource limits. Useful for populating language selectors in UIs.
+        No authentication required.
+      tags:
+        - Operations
+      security:
+        - {}
+      responses:
+        "200":
+          description: Array of supported language configurations, sorted alphabetically by ID.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LanguageInfo"
+              example:
+                - id: bash
+                  compiled: false
+                  default_cpu_limit_ms: 2000
+                  default_memory_limit_kb: 262144
+                  run_proc_limit: 20
+                - id: c
+                  compiled: true
+                  default_cpu_limit_ms: 2000
+                  default_memory_limit_kb: 524288
+                  run_proc_limit: 10
+                - id: cpp
+                  compiled: true
+                  default_cpu_limit_ms: 2000
+                  default_memory_limit_kb: 524288
+                  run_proc_limit: 10
+                - id: python
+                  compiled: false
+                  default_cpu_limit_ms: 2000
+                  default_memory_limit_kb: 524288
+                  run_proc_limit: 50
+                - id: rust
+                  compiled: true
+                  default_cpu_limit_ms: 2000
+                  default_memory_limit_kb: 524288
+                  run_proc_limit: 10
+
+tags:
+  - name: Execution
+    description: Code submission and result streaming endpoints.
+  - name: Operations
+    description: Health checks and operational metadata.
