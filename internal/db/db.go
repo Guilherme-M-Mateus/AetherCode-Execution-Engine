@@ -30,6 +30,29 @@ func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
+// ConnectAppRole opens a smaller connection pool using the aethercode_app role URL.
+// Auth middleware uses this pool so tenant/user lookups are governed by
+// Row-Level Security policies defined in migration 002. The pool is intentionally
+// small (4–32 conns) since auth queries are lightweight and infrequent.
+func ConnectAppRole(ctx context.Context, appURL string) (*pgxpool.Pool, error) {
+	config, err := pgxpool.ParseConfig(appURL)
+	if err != nil {
+		return nil, fmt.Errorf("db: app-role parse config: %w", err)
+	}
+	config.MinConns = 4
+	config.MaxConns = 32
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("db: app-role connect: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("db: app-role ping: %w", err)
+	}
+	return pool, nil
+}
+
 func Migrate(ctx context.Context, pool *pgxpool.Pool, migrationFS fs.FS) error {
 	// Acquire advisory lock to prevent concurrent migration runs (blue-green, fast restart).
 	// Lock ID 0x57_4A_4D_49_47 = "STMIG" in ASCII-ish hex.
