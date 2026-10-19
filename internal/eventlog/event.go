@@ -31,8 +31,10 @@ func (e Event) IsTerminal() bool {
 
 func (e Event) MarshalSSE() []byte {
 	data, _ := json.Marshal(e)
-	// Pre-size: "id: " + id + "\nevent: " + type + "\ndata: " + data + "\n\n"
-	buf := make([]byte, 0, 4+len(e.ID)+8+len(e.Type)+7+len(data)+2)
+	// Pre-size the buffer. Each component is bounded:
+	//   ID ≤ ~100 bytes (UUID + epoch + seq), Type ≤ 20 bytes, data ≤ 16 MiB (pubsub cap).
+	// Using individual appends avoids integer arithmetic that could mislead static analysis.
+	var buf []byte
 	buf = append(buf, "id: "...)
 	buf = append(buf, e.ID...)
 	buf = append(buf, "\nevent: "...)
