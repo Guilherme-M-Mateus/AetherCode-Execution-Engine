@@ -3,14 +3,12 @@ name: promote
 # Self-healing promotion pipeline.
 #
 # Every branch flows forward automatically once CI is green.
-# The ONLY human gate is the final staging -> production merge.
+# The ONLY human gate is the final development -> production merge.
 #
 #   feature/* (and fix/*, security/*, ci/*, docs/*, chore/*, refactor/*)
 #       CI green  →  auto PR + merge  →  development
 #
-#   development   CI green  →  auto PR + merge  →  testing
-#   testing       CI green  →  auto PR + merge  →  staging
-#   staging       CI green  →  PR opened only   →  production  (human gate)
+#   development   CI green  →  PR opened only   →  production  (human gate)
 #
 # Each hop is idempotent: if the target already contains the source's commits
 # the hop is skipped silently.  A `concurrency` group serialises promotions
@@ -22,8 +20,6 @@ on:
     # Listen on every branch; the jobs below decide what to do per source branch.
     branches:
       - "development"
-      - "testing"
-      - "staging"
       - "feature/**"
       - "fix/**"
       - "security/**"
@@ -50,7 +46,7 @@ jobs:
     # Only run when CI was green AND the source is a feature/topic branch.
     if: >-
       github.event.workflow_run.conclusion == 'success'
-      && !contains(fromJson('["development","testing","staging","production"]'),
+      && !contains(fromJson('["development","production"]'),
                    github.event.workflow_run.head_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -109,9 +105,9 @@ jobs:
           gh pr merge "$prnum" --repo "$REPO" --merge
           echo "  merged ${SRC} -> ${DST}"
 
-  # ── development → testing → staging; open staging → production ─────────────
+  # ── development → production (human gate) ───────────────────────────────────
   main_chain:
-    name: "development → testing → staging → (production PR)"
+    name: "development → (production PR)"
     if: >-
       github.event.workflow_run.conclusion == 'success'
       && github.event.workflow_run.head_branch == 'development'
@@ -120,7 +116,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Promote development -> testing -> staging; open staging -> production
+      - name: Open development -> production PR (human gate)
         run: |
           set -euo pipefail
           REPO="${GITHUB_REPOSITORY}"
@@ -130,54 +126,6 @@ jobs:
             local src="$1" dst="$2" ahead
             ahead="$(gh api "repos/${REPO}/compare/${dst}...${src}" --jq '.ahead_by')"
             [ "${ahead:-0}" -gt 0 ]
-          }
-
-          # Wait (up to ~20 min) for a PR's checks to finish; return 1 on red.
-          wait_green() {
-            local n="$1" i out pending failed
-            for i in $(seq 1 60); do
-              out="$(gh pr checks "$n" --repo "$REPO" 2>/dev/null || true)"
-              pending="$(printf '%s\n' "$out" | grep -cE 'pending|in_progress|queued' || true)"
-              failed="$(printf '%s\n' "$out"  | grep -cE 'fail'                        || true)"
-              echo "  [pr #${n} ${i}/60] pending=${pending:-0} filed=${failed:-0}"
-              if [ -n "$out" ] && [ "${pending:-1}" = "0" ]; then
-                if [ "${failed:-0}" != "0" ]; then return 1; fi
-                return 0
-              fi
-              sleep 20
-            done
-            echo "  PR #${n} timed out"
-            return 1
-          }
-
-          # Open a PR src->dst, wait for green CI, merge.
-          promote() {
-            local src="$1" dst="$2" existing url prnum
-            echo "==> ${src} -> ${dst}"
-            if ! behind "$src" "$dst"; then
-              echo "  ${dst} already contains ${src}; skipping"
-              return 0
-            fi
-            existing="$(gh pr list --repo "$REPO" --state open \
-              --base "$dst" --head "$src" \
-              --json number --jq '.[].number' | head -n1 || true)"
-            [ -n "${existing}" ] && {
-              echo "  closing stale #${existing}"
-              gh pr close "$existing" --repo "$REPO" || true
-            }
-            url="$(gh pr create --repo "$REPO" \
-              --base "$dst" --head "$src" \
-              --title "promote: ${src} -> ${dst}" \
-              --body "Automatic promotion of \`${src}\` to \`${dst}\`.")"
-            prnum="${url##*/}"
-            echo "  opened PR #${prnum}"
-            if ! wait_green "$prnum"; then
-              echo "::error::${src} -> ${dst} failed CI"
-              exit 1
-            fi
-            echo "  merging #${prnum}"
-            gh pr merge "$prnum" --repo "$REPO" --merge
-            echo "  merged ${src} -> ${dst}"
           }
 
           # Open a PR src->dst but never auto-merge (human gate).
@@ -202,7 +150,5 @@ jobs:
             echo "  opened ${url}"
           }
 
-          promote development testing
-          promote testing    staging
-          open_only staging  production
+          open_only development production
           echo "==> done"

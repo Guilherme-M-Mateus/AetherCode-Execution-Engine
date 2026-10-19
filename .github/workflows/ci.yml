@@ -1,13 +1,11 @@
 name: CI
 
-# Every promotion (development -> testing -> staging -> production) is a PR
-# that must be green on CI. CI also runs on direct pushes to each branch.
+# Every promotion (development -> production) is a PR that must be green on
+# CI. CI also runs on direct pushes to each branch.
 on:
   push:
     branches:
       - development
-      - testing
-      - staging
       - production
       - "feature/**"
       - "fix/**"

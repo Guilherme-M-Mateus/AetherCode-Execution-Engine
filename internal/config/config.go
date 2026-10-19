@@ -52,8 +52,8 @@ type Config struct {
 	BlockReadTimeout time.Duration
 
 	// Go runtime tuning
-	GOGC        int
-	GOMEMLIMIT  int64
+	GOGC       int
+	GOMEMLIMIT int64
 }
 
 func Load() Config {

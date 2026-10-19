@@ -315,11 +315,11 @@ func (w *Worker) loadTests(ctx context.Context, sub *model.Submission) ([]testDa
 // running to its wall-clock limit, with slack for sandbox and DB round trips.
 func jobBudget(lang sandbox.LangConfig, limits sandbox.RunLimits, tests int) time.Duration {
 	cpu, _ := lang.Effective(limits)
-	total := sandbox.ClockLimit(cpu) * uint64(tests)
+	total := sandbox.ClockLimit(cpu) * uint64(tests) //nolint:gosec // G115: tests is a non-negative test count
 	if lang.Compiled {
 		total += sandbox.ClockLimit(lang.CompileCPU)
 	}
-	return time.Duration(total) + 15*time.Second
+	return time.Duration(total) + 15*time.Second //nolint:gosec // G115: total is a bounded ns budget, far below MaxInt64
 }
 
 func (w *Worker) compile(ctx context.Context, lang sandbox.LangConfig, sourceCode string) (*sandbox.Result, error) {
