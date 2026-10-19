@@ -21,17 +21,18 @@ type Config struct {
 	LogFormat     string
 
 	// Auth (Zitadel OIDC)
-	AuthEnabled  bool
-	OIDCIssuer   string
-	OIDCJWKSURL  string
-	OIDCAudience string
+	AuthEnabled    bool
+	OIDCIssuer     string
+	OIDCJWKSURL    string
+	OIDCAudience   string
+	DatabaseAppURL string // optional: connects as aethercode_app for RLS-enforced auth queries
 
 	// Rate limiting
-	RateLimitPerMinute          int
-	RateLimitBurst              int
-	RateLimitUnauthPerMinute    int // per source IP, 0 = disabled
-	RateLimitUnauthBurst        int
-	AdmissionMaxQueueDepth      int
+	RateLimitPerMinute       int
+	RateLimitBurst           int
+	RateLimitUnauthPerMinute int // per source IP, 0 = disabled
+	RateLimitUnauthBurst     int
+	AdmissionMaxQueueDepth   int
 
 	// CORS
 	CORSAllowedOrigins string
@@ -71,10 +72,11 @@ func Load() Config {
 		LogLevel:      env("AC_LOG_LEVEL", "info"),
 		LogFormat:     env("AC_LOG_FORMAT", "json"),
 
-		AuthEnabled:  envBool("AC_AUTH_ENABLED", false),
-		OIDCIssuer:   env("AC_OIDC_ISSUER", "https://sso.example.com"),
-		OIDCJWKSURL:  env("AC_OIDC_JWKS_URL", "http://127.0.0.1:8087/oauth/v2/keys"),
-		OIDCAudience: env("AC_OIDC_AUDIENCE", ""),
+		AuthEnabled:    envBool("AC_AUTH_ENABLED", false),
+		OIDCIssuer:     env("AC_OIDC_ISSUER", "https://sso.example.com"),
+		OIDCJWKSURL:    env("AC_OIDC_JWKS_URL", "http://127.0.0.1:8087/oauth/v2/keys"),
+		OIDCAudience:   env("AC_OIDC_AUDIENCE", ""),
+		DatabaseAppURL: env("AC_DATABASE_APP_URL", ""),
 
 		RateLimitPerMinute:       envInt("AC_RATE_LIMIT_PER_MINUTE", 30),
 		RateLimitBurst:           envInt("AC_RATE_LIMIT_BURST", 10),
@@ -133,6 +135,9 @@ func (c Config) Validate() error {
 
 	if !c.AuthEnabled {
 		fmt.Fprintln(os.Stderr, "WARNING: AC_AUTH_ENABLED=false — authentication is disabled")
+	}
+	if c.AuthEnabled && c.DatabaseAppURL == "" {
+		fmt.Fprintln(os.Stderr, "WARNING: AC_DATABASE_APP_URL not set — auth queries run as DB owner, bypassing Row-Level Security")
 	}
 
 	if len(errs) > 0 {

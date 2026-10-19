@@ -137,7 +137,9 @@ func (w *Worker) process(ctx context.Context, submissionID string) error {
 	defer metrics.ActiveWorkers.Dec()
 	// finalVerdict is set just before each return so the deferred histogram gets labels.
 	finalVerdict := string(model.VerdictInternalError)
-	defer func() { metrics.JobProcessingDuration.WithLabelValues(sub.Language, finalVerdict).Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		metrics.JobProcessingDuration.WithLabelValues(sub.Language, finalVerdict).Observe(time.Since(start).Seconds())
+	}()
 
 	// Load tests from the appropriate source
 	tests, limits, err := w.loadTests(jobCtx, sub)
