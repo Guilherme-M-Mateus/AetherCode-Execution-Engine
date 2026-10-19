@@ -8,26 +8,26 @@ import (
 func validConfig() Config {
 	// Hermetic test fixture: the values below are dummies, not real credentials.
 	return Config{ //nolint:gosec // G101: dummy, non-secret values in a unit-test fixture
-		GatewayAddr:            "127.0.0.1:5100",
-		DatabaseURL:            "postgres://aethercode:aethercode@127.0.0.1:5433/aethercode_exec",
-		RedisAddr:              "127.0.0.1:6379",
-		JudgeURL:               "http://127.0.0.1:5050",
-		JudgeToken:             "a-secret-token",
-		WorkerCount:            8,
-		TestParallelism:        4,
-		StreamName:             "ac:submissions",
-		ConsumerGroup:          "workers",
-		AdmissionMaxQueueDepth: 5000,
-		RateLimitPerMinute:          30,
-		RateLimitBurst:              10,
-		RateLimitUnauthPerMinute:    0, // disabled by default
-		RateLimitUnauthBurst:        5,
-		SubmitWeight:           3,
-		JobTimeout:             90 * time.Second,
-		CompileCacheTTL:        60 * time.Second,
-		BlockReadTimeout:       500 * time.Millisecond,
-		GOGC:                   200,
-		GOMEMLIMIT:             0,
+		GatewayAddr:              "127.0.0.1:5100",
+		DatabaseURL:              "postgres://aethercode:aethercode@127.0.0.1:5433/aethercode_exec",
+		RedisAddr:                "127.0.0.1:6379",
+		JudgeURL:                 "http://127.0.0.1:5050",
+		JudgeToken:               "a-secret-token",
+		WorkerCount:              8,
+		TestParallelism:          4,
+		StreamName:               "ac:submissions",
+		ConsumerGroup:            "workers",
+		AdmissionMaxQueueDepth:   5000,
+		RateLimitPerMinute:       30,
+		RateLimitBurst:           10,
+		RateLimitUnauthPerMinute: 0, // disabled by default
+		RateLimitUnauthBurst:     5,
+		SubmitWeight:             3,
+		JobTimeout:               90 * time.Second,
+		CompileCacheTTL:          60 * time.Second,
+		BlockReadTimeout:         500 * time.Millisecond,
+		GOGC:                     200,
+		GOMEMLIMIT:               0,
 	}
 }
 
