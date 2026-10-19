@@ -142,7 +142,7 @@ func (w *Worker) process(ctx context.Context, submissionID string) error {
 	}()
 
 	// Load tests from the appropriate source
-	tests, limits, err := w.loadTests(jobCtx, sub)
+	tests, limits, checker, err := w.loadTests(jobCtx, sub)
 	if err != nil {
 		return w.failSubmission(jobCtx, id, model.VerdictInternalError, fmt.Sprintf("load tests: %v", err), log)
 	}
@@ -223,7 +223,7 @@ func (w *Worker) process(ctx context.Context, submissionID string) error {
 		log.Warn("failed to publish RUNNING event", "err", err)
 	}
 
-	results, totalCPU, peakMem, passed, overallVerdict, err := w.runTestsBatched(jobCtx, submissionID, lang, sub.SourceCode, tests, fileID, limits, log)
+	results, totalCPU, peakMem, passed, overallVerdict, err := w.runTestsBatched(jobCtx, submissionID, lang, sub.SourceCode, tests, fileID, limits, checker, log)
 	if err != nil {
 		return w.failSubmission(jobCtx, id, model.VerdictInternalError, fmt.Sprintf("batch run: %v", err), log)
 	}
@@ -286,15 +286,17 @@ func (w *Worker) process(ctx context.Context, submissionID string) error {
 	return nil
 }
 
-func (w *Worker) loadTests(ctx context.Context, sub *model.Submission) ([]testData, sandbox.RunLimits, error) {
+// loadTests returns the tests, resource limits and output checker for sub.
+// Run mode always uses the exact checker: callers supply their own expected output.
+func (w *Worker) loadTests(ctx context.Context, sub *model.Submission) ([]testData, sandbox.RunLimits, string, error) {
 	if sub.Mode == string(model.ModeSubmit) && sub.ProblemVersionID != nil {
 		pv, err := db.GetProblemVersion(ctx, w.pool, *sub.ProblemVersionID)
 		if err != nil {
-			return nil, sandbox.RunLimits{}, err
+			return nil, sandbox.RunLimits{}, "", err
 		}
 		tcs, err := db.GetTestCases(ctx, w.pool, *sub.ProblemVersionID)
 		if err != nil {
-			return nil, sandbox.RunLimits{}, err
+			return nil, sandbox.RunLimits{}, "", err
 		}
 		tests := make([]testData, len(tcs))
 		for i, tc := range tcs {
@@ -312,13 +314,19 @@ func (w *Worker) loadTests(ctx context.Context, sub *model.Submission) ([]testDa
 		if pv.MemoryLimit != nil && *pv.MemoryLimit > 0 {
 			limits.Memory = uint64(*pv.MemoryLimit) //nolint:gosec // non-negative DB value
 		}
-		return tests, limits, nil
+		checker := pv.CheckerType
+		if !knownChecker(checker) {
+			slog.Warn("unsupported checker_type, falling back to exact",
+				"submission_id", sub.ID, "problem_version_id", pv.ID, "checker_type", checker)
+			checker = CheckerExact
+		}
+		return tests, limits, checker, nil
 	}
 
 	// Run mode: tests and limits from Redis
 	redisTests, limits, err := w.pubsub.GetTests(ctx, sub.ID.String())
 	if err != nil {
-		return nil, sandbox.RunLimits{}, err
+		return nil, sandbox.RunLimits{}, "", err
 	}
 	tests := make([]testData, len(redisTests))
 	for i, rt := range redisTests {
@@ -328,7 +336,7 @@ func (w *Worker) loadTests(ctx context.Context, sub *model.Submission) ([]testDa
 			IsSample:       true, // all client-supplied tests are visible
 		}
 	}
-	return tests, limits, nil
+	return tests, limits, CheckerExact, nil
 }
 
 // jobBudget is the worst-case time a job needs: compiling plus every test
@@ -364,7 +372,7 @@ const maxBatchSize = 32
 // one HTTP round-trip per test. go-judge executes the Cmds in the batch in
 // parallel (up to its -parallelism setting), so a 10-test submission that took
 // 10 sequential round-trips now completes in ~1 round-trip wall-clock time.
-func (w *Worker) runTestsBatched(ctx context.Context, jobID string, lang sandbox.LangConfig, sourceCode string, tests []testData, fileID string, limits sandbox.RunLimits, log *slog.Logger) (results []model.TestResult, totalCPU, peakMem int64, passed int, overallVerdict model.Verdict, err error) {
+func (w *Worker) runTestsBatched(ctx context.Context, jobID string, lang sandbox.LangConfig, sourceCode string, tests []testData, fileID string, limits sandbox.RunLimits, checker string, log *slog.Logger) (results []model.TestResult, totalCPU, peakMem int64, passed int, overallVerdict model.Verdict, err error) {
 	overallVerdict = model.VerdictAccepted
 	results = make([]model.TestResult, 0, len(tests))
 
@@ -415,7 +423,7 @@ func (w *Worker) runTestsBatched(ctx context.Context, jobID string, lang sandbox
 
 		for i, r := range batchResults {
 			testIndex := batchStart + i
-			tr := judgeResult(r, testIndex, batch[i].ExpectedOutput)
+			tr := judgeResult(r, testIndex, batch[i].ExpectedOutput, checker)
 			results = append(results, tr)
 			totalCPU += tr.CPUTimeNs
 			if tr.MemoryBytes > peakMem {
@@ -443,7 +451,7 @@ func (w *Worker) runTestsBatched(ctx context.Context, jobID string, lang sandbox
 }
 
 // judgeResult converts a single go-judge sandbox.Result into a model.TestResult.
-func judgeResult(r sandbox.Result, testIndex int, expectedOutput string) model.TestResult {
+func judgeResult(r sandbox.Result, testIndex int, expectedOutput, checker string) model.TestResult {
 	tr := model.TestResult{
 		TestIndex:     testIndex,
 		CPUTimeNs:     int64(r.Time),   //nolint:gosec // go-judge reports CPU time in ns (non-negative)
@@ -454,7 +462,7 @@ func judgeResult(r sandbox.Result, testIndex int, expectedOutput string) model.T
 
 	switch r.Status {
 	case sandbox.StatusAccepted:
-		tr.Verdict = JudgeOutput(expectedOutput, r.Files["stdout"])
+		tr.Verdict = JudgeOutput(expectedOutput, r.Files["stdout"], checker)
 	case sandbox.StatusTimeLimitEx:
 		tr.Verdict = model.VerdictTimeLimitEx
 	case sandbox.StatusMemoryLimitEx:
