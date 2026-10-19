@@ -65,12 +65,12 @@ func TestMain(m *testing.M) {
 
 func newSub(mode string) *model.Submission {
 	return &model.Submission{
-		ID:       uuid.New(),
-		TenantID: model.DefaultTenantID,
-		Mode:     mode,
-		Language: "python",
+		ID:         uuid.New(),
+		TenantID:   model.DefaultTenantID,
+		Mode:       mode,
+		Language:   "python",
 		SourceCode: "print('hello')",
-		Status:   model.StatusQueued,
+		Status:     model.StatusQueued,
 	}
 }
 
@@ -84,7 +84,11 @@ func mustInsert(t *testing.T, sub *model.Submission) {
 // ── tests ──────────────────────────────────────────────────────────────────
 
 func TestTruncate(t *testing.T) {
-	cases := []struct{ in string; max int; want string }{
+	cases := []struct {
+		in   string
+		max  int
+		want string
+	}{
 		{"hello", 10, "hello"},
 		{"hello", 3, "hel"},
 		{"", 5, ""},
