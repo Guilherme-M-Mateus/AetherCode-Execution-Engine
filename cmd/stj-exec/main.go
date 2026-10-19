@@ -8,12 +8,13 @@ import (
 	"net/http/pprof"
 	"runtime/debug"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
